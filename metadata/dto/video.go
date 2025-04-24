@@ -1,9 +1,9 @@
 package dto
 
 type IgMeta struct {
-	res    string
-	ext    string
-	video  string
-	audio  string
-	author string
+	Res    string
+	Ext    string
+	Video  string
+	Audio  string
+	Author string
 }
