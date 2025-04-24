@@ -112,6 +112,8 @@ func ExtractMeta(url string, id string) *dto.IgMeta {
 		fmt.Println("have no videourl")
 	}
 
-	return &dto.IgMeta{}
+	return &dto.IgMeta{
+		Video: videourl,
+	}
 
 }
