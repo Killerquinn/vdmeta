@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"vdmeta/metadata/dto"
+	"vdmeta/metadata/models"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -18,33 +18,54 @@ var (
 )
 
 func ExtractIg(RawUrl string) string {
-	parsedurl, err := url.Parse(RawUrl)
+	content, err := ExtractParts(RawUrl)
+	//TODO: add logic, rewrite ExtractMeta func
+}
+
+func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
+	u, err := url.Parse(RawUrl)
+
 	if err != nil {
-		fmt.Printf("error %d", err)
-		return ""
+		return nil, fmt.Errorf("invalid url: %v", err)
 	}
 
-	re := regexp.MustCompile(`^([^/]+)/([^/]+)/([^/]+)/`)
-	match := re.FindStringSubmatch(parsedurl.Path)
-	if len(match) > 2 {
-		switch {
-		case match[0] == "reel" || match[0] == "reels" || match[0] == "p":
-			if len(match[1]) > 0 && len(match[1]) < 25 {
-				ExtractMeta(RawUrl, match[1])
-			}
-		case match[0] == "stories":
-			if len(match[2]) > 0 && len(match[2]) < 25 && match[1] == "highlights" {
-				ExtractMeta(RawUrl, match[2])
-			}
-			fmt.Printf("stories actually not supported, only highlight version err: %v", ErrNotSupportedLink)
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty path")
+	}
 
-		default:
-			fmt.Println(ErrNotSupportedLink)
+	switch parts[0] {
+	case "p":
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("missing post ID in link")
 		}
+		return &models.InstagramContent{
+			Type: "post",
+			ID:   parts[1],
+		}, nil
 
+	case "reel":
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("missing reel ID in link")
+		}
+		return &models.InstagramContent{
+			Type: "reel",
+			ID:   parts[1],
+		}, nil
+
+	case "stories":
+		if len(parts) < 3 {
+			return nil, fmt.Errorf("missing username of story owner in link")
+		}
+		return &models.InstagramContent{
+			Type:   "stories",
+			IgUser: parts[1],
+			ID:     parts[2],
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported type of material: %s", parts[0])
 	}
-
-	return ""
 }
 
 func ExtractMeta(url string, id string) *dto.IgMeta {
@@ -77,7 +98,7 @@ func ExtractMeta(url string, id string) *dto.IgMeta {
 	}
 
 	htmldoc.Find("script[type='application/json']").Each(func(i int, s *goquery.Selection) {
-		if strings.Contains(s.Text(), "__additionalDataLoaded") {
+		if strings.Contains(s.Text(), "data") {
 			jsonData = s.Text()
 		}
 	})
