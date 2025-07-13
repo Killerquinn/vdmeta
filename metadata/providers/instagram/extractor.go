@@ -1,12 +1,13 @@
 package instagram
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 	"vdmeta/metadata/dto"
 	"vdmeta/metadata/models"
 
@@ -17,9 +18,14 @@ var (
 	ErrNotSupportedLink = errors.New("that link is not supported yet")
 )
 
-func ExtractIg(RawUrl string) string {
+func ExtractIg(RawUrl string) ([]string, error) {
 	content, err := ExtractParts(RawUrl)
+	if err != nil || content.Type == "stories" || content.Type == "highlights" {
+
+	}
+	meta, err := ExtractLink(RawUrl)
 	//TODO: add logic, rewrite ExtractMeta func
+	return meta.Video
 }
 
 func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
@@ -53,88 +59,107 @@ func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
 			ID:   parts[1],
 		}, nil
 
-	case "stories":
-		if len(parts) < 3 {
-			return nil, fmt.Errorf("missing username of story owner in link")
-		}
-		return &models.InstagramContent{
-			Type:   "stories",
-			IgUser: parts[1],
-			ID:     parts[2],
-		}, nil
-
 	default:
 		return nil, fmt.Errorf("unsupported type of material: %s", parts[0])
 	}
 }
 
-func ExtractMeta(url string, id string) *dto.IgMeta {
-	const op = "instagram.extract_meta"
-
-	req, err := http.NewRequest("GET", url, nil)
+func SelectorRetryAdditional(rawUrl string) (string, bool, error) {
+	jsonString := ""
+	req, err := http.NewRequest("GET", rawUrl, nil)
 	if err != nil {
-		fmt.Println(err)
+		return "", false, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
 	req.Header.Set("Referer", "https://www.instagram.com/")
-	req.Header.Set("Origin", "https://www.instagram.com")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng, application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("DNT", "1")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Cache-Control", "no-cache")
 
-	// maybe smth headers more needs to it...
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Println(err)
+	do, err := http.DefaultClient.Do(req)
+	if err != nil || do == nil {
+		return "", false, err
 	}
 
-	defer resp.Body.Close()
-
-	jsonData := ""
-
-	htmldoc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		fmt.Println(err)
+	if do.StatusCode != 200 {
+		return "", false, fmt.Errorf("connection not stable")
 	}
 
-	htmldoc.Find("script[type='application/json']").Each(func(i int, s *goquery.Selection) {
-		if strings.Contains(s.Text(), "data") {
-			jsonData = s.Text()
+	defer do.Body.Close()
+
+	godoc, err := goquery.NewDocumentFromReader(do.Body)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot convert response into goquery document")
+	}
+
+	godoc.Find("script[type='application/json']").Each(func(i int, s *goquery.Selection) {
+		jsonText := s.Text()
+
+		if !strings.Contains(jsonText, "video_versions") {
+			return
+		} else {
+			jsonString = jsonText
 		}
 	})
 
-	if jsonData == "" {
-		fmt.Println("json data is empty")
+	return jsonString, true, nil
+}
+
+func ExtractLink(rawUrl string) (*dto.IgMeta, error) {
+	const op = "instagram.extract_meta"
+
+	const maxRetries = 6
+	jsonString := ""
+	var urls []string
+	var author string
+
+	for i := 0; i < maxRetries; i++ {
+		currentJson, found, err := SelectorRetryAdditional(rawUrl)
+		if currentJson == "" || !found || err != nil {
+			fmt.Println("new retry...")
+			time.Sleep(time.Second)
+		} else {
+			jsonString = currentJson
+			break
+		}
 	}
 
-	var reelData map[string]interface{}
-	err = json.Unmarshal([]byte(jsonData), &reelData)
-	if err != nil {
-		fmt.Println(err)
+	regexpBlock := regexp.MustCompile(`"video_versions":(\[.*?\])`)
+	authorRxpBlock := regexp.MustCompile(`"ig_artist":(\{.*?\})`)
+	blockWithUsername := authorRxpBlock.FindAllStringSubmatch(jsonString, -1)
+	blocks := regexpBlock.FindAllStringSubmatch(jsonString, -1)
+	urlRxp := regexp.MustCompile(`"url":"([^"]+)"`)
+	authorPost := regexp.MustCompile(`"username":"([^"]+)"`)
+	for _, block := range blocks {
+		urlBlock := urlRxp.FindAllStringSubmatch(block[0], 3)
+		for _, u := range urlBlock {
+			res := strings.ReplaceAll(u[1], "\\", "")
+			urls = append(urls, res)
+		}
 	}
-
-	items, ok := reelData["items"].([]interface{})
-	if !ok {
-		fmt.Println("have no items")
+	urls = urls[:3]
+	for _, block := range blockWithUsername {
+		usernameBlock := authorPost.FindAllStringSubmatch(block[0], 1)
+		for _, u := range usernameBlock {
+			author = u[1]
+		}
 	}
-
-	item, ok := items[0].(map[string]interface{})
-	if !ok {
-		fmt.Println("have no item")
-	}
-
-	videourls, ok := item["video_versions"].([]interface{})
-	if !ok {
-		fmt.Println("have no videourls")
-	}
-
-	videourl, ok := videourls[0].(map[string]interface{})["url"].(string)
-	if !ok {
-		fmt.Println("have no videourl")
+	if len(urls) == 0 || author == "" {
+		return nil, fmt.Errorf("there is no author or urls, retry it")
 	}
 
 	return &dto.IgMeta{
-		Video: videourl,
-	}
+		VideoLink: urls,
+		Author:    author,
+	}, nil
 
 }
