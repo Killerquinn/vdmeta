@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"vdmeta/metadata/dto"
+	"vdmeta/metadata/config"
 	"vdmeta/metadata/models"
 
 	"github.com/PuerkitoBio/goquery"
@@ -18,17 +18,36 @@ var (
 	ErrNotSupportedLink = errors.New("that link is not supported yet")
 )
 
-func ExtractIg(RawUrl string) ([]string, error) {
-	content, err := ExtractParts(RawUrl)
-	if err != nil || content.Type == "stories" || content.Type == "highlights" {
-
-	}
-	meta, err := ExtractLink(RawUrl)
-	//TODO: add logic, rewrite ExtractMeta func
-	return meta.Video
+type ConfLoader struct {
+	cfg *config.Config
 }
 
-func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
+func NewConfigLoader() (*ConfLoader, error) {
+	cfg := config.LoadConf()
+	if cfg == nil {
+		return nil, fmt.Errorf("cannot load config")
+	}
+	return &ConfLoader{
+		cfg: cfg,
+	}, nil
+}
+
+func (c *ConfLoader) ExtractIg(RawUrl string) (*models.InstagramContent, error) {
+	content, err := c.ExtractParts(RawUrl)
+	if err != nil || content.Type == "stories" || content.Type == "highlights" {
+		return nil, fmt.Errorf("i support instagram, but i cant reconize your link, can u sure is it right, please?")
+	}
+	meta, err := c.ExtractLink(RawUrl)
+	if err != nil {
+		return nil, err
+	}
+	return &models.InstagramContent{
+		VideoLink: meta.VideoLink,
+		Author:    meta.Author,
+	}, nil
+}
+
+func (c *ConfLoader) ExtractParts(RawUrl string) (*models.IgMeta, error) {
 	u, err := url.Parse(RawUrl)
 
 	if err != nil {
@@ -45,7 +64,7 @@ func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("missing post ID in link")
 		}
-		return &models.InstagramContent{
+		return &models.IgMeta{
 			Type: "post",
 			ID:   parts[1],
 		}, nil
@@ -54,7 +73,7 @@ func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("missing reel ID in link")
 		}
-		return &models.InstagramContent{
+		return &models.IgMeta{
 			Type: "reel",
 			ID:   parts[1],
 		}, nil
@@ -64,18 +83,18 @@ func ExtractParts(RawUrl string) (*models.InstagramContent, error) {
 	}
 }
 
-func SelectorRetryAdditional(rawUrl string) (string, bool, error) {
+func (c *ConfLoader) SelectorRetryAdditional(rawUrl string) (string, bool, error) {
 	jsonString := ""
 	req, err := http.NewRequest("GET", rawUrl, nil)
 	if err != nil {
 		return "", false, err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 13; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
+	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	req.Header.Set("Referer", "https://www.instagram.com/")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng, application/json, text/javascript, */*; q=0.01")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
-	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Accept", c.cfg.Accept)
+	req.Header.Set("Accept-Language", c.cfg.AcceptLanguage)
+	req.Header.Set("Connection", c.cfg.Connection)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("DNT", "1")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
@@ -101,10 +120,10 @@ func SelectorRetryAdditional(rawUrl string) (string, bool, error) {
 		return "", false, fmt.Errorf("cannot convert response into goquery document")
 	}
 
-	godoc.Find("script[type='application/json']").Each(func(i int, s *goquery.Selection) {
+	godoc.Find(c.cfg.NeededTag).Each(func(i int, s *goquery.Selection) {
 		jsonText := s.Text()
 
-		if !strings.Contains(jsonText, "video_versions") {
+		if !strings.Contains(jsonText, c.cfg.TextKey) {
 			return
 		} else {
 			jsonString = jsonText
@@ -114,16 +133,16 @@ func SelectorRetryAdditional(rawUrl string) (string, bool, error) {
 	return jsonString, true, nil
 }
 
-func ExtractLink(rawUrl string) (*dto.IgMeta, error) {
+func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error) {
 	const op = "instagram.extract_meta"
 
-	const maxRetries = 6
+	maxRetries := c.cfg.MaxRetries
 	jsonString := ""
 	var urls []string
 	var author string
 
 	for i := 0; i < maxRetries; i++ {
-		currentJson, found, err := SelectorRetryAdditional(rawUrl)
+		currentJson, found, err := c.SelectorRetryAdditional(rawUrl)
 		if currentJson == "" || !found || err != nil {
 			fmt.Println("new retry...")
 			time.Sleep(time.Second)
@@ -132,8 +151,8 @@ func ExtractLink(rawUrl string) (*dto.IgMeta, error) {
 			break
 		}
 	}
-
-	regexpBlock := regexp.MustCompile(`"video_versions":(\[.*?\])`)
+	mustCompile := fmt.Sprintf(`%s:(\[.*?\])`, c.cfg.TextKey)
+	regexpBlock := regexp.MustCompile(mustCompile)
 	authorRxpBlock := regexp.MustCompile(`"ig_artist":(\{.*?\})`)
 	blockWithUsername := authorRxpBlock.FindAllStringSubmatch(jsonString, -1)
 	blocks := regexpBlock.FindAllStringSubmatch(jsonString, -1)
@@ -153,11 +172,11 @@ func ExtractLink(rawUrl string) (*dto.IgMeta, error) {
 			author = u[1]
 		}
 	}
-	if len(urls) == 0 || author == "" {
-		return nil, fmt.Errorf("there is no author or urls, retry it")
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("there is no urls, retry it")
 	}
 
-	return &dto.IgMeta{
+	return &models.InstagramContent{
 		VideoLink: urls,
 		Author:    author,
 	}, nil
