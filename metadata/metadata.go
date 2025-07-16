@@ -2,7 +2,8 @@ package metadata
 
 import (
 	"fmt"
-	"vdmeta/metadata/models"
+
+	"github.com/killerquinn/vdmeta/metadata/models"
 )
 
 type Providers interface {

@@ -8,8 +8,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"vdmeta/metadata/config"
-	"vdmeta/metadata/models"
+
+	"github.com/killerquinn/vdmeta/metadata/config"
+	"github.com/killerquinn/vdmeta/metadata/models"
 
 	"github.com/PuerkitoBio/goquery"
 )
