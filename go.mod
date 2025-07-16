@@ -1,4 +1,4 @@
-module vdmeta
+module github.com/killerquinn/vdmeta
 
 go 1.24.1
 
