@@ -23,28 +23,9 @@ type ConfLoader struct {
 	cfg *config.Config
 }
 
-func NewConfigLoader() (*ConfLoader, error) {
-	cfg := config.LoadConf()
-	if cfg == nil {
-		return nil, fmt.Errorf("cannot load config")
-	}
+func NewConfigLoader(config *config.Config) (*ConfLoader, error) {
 	return &ConfLoader{
-		cfg: cfg,
-	}, nil
-}
-
-func (c *ConfLoader) ExtractIg(RawUrl string) (*models.InstagramContent, error) {
-	content, err := c.ExtractParts(RawUrl)
-	if err != nil || content.Type == "stories" || content.Type == "highlights" {
-		return nil, fmt.Errorf("i support instagram, but i cant reconize your link, can u sure is it right, please?")
-	}
-	meta, err := c.ExtractLink(RawUrl)
-	if err != nil {
-		return nil, err
-	}
-	return &models.InstagramContent{
-		VideoLink: meta.VideoLink,
-		Author:    meta.Author,
+		cfg: config,
 	}, nil
 }
 
@@ -70,7 +51,7 @@ func (c *ConfLoader) ExtractParts(RawUrl string) (*models.IgMeta, error) {
 			ID:   parts[1],
 		}, nil
 
-	case "reel":
+	case "reels":
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("missing reel ID in link")
 		}
@@ -84,7 +65,7 @@ func (c *ConfLoader) ExtractParts(RawUrl string) (*models.IgMeta, error) {
 	}
 }
 
-func (c *ConfLoader) SelectorRetryAdditional(rawUrl string) (string, bool, error) {
+func (c *ConfLoader) FetchHtmlWithSelector(rawUrl string) (string, bool, error) {
 	jsonString := ""
 	req, err := http.NewRequest("GET", rawUrl, nil)
 	if err != nil {
@@ -143,7 +124,7 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 	var author string
 
 	for i := 0; i < maxRetries; i++ {
-		currentJson, found, err := c.SelectorRetryAdditional(rawUrl)
+		currentJson, found, err := c.FetchHtmlWithSelector(rawUrl)
 		if currentJson == "" || !found || err != nil {
 			fmt.Println("new retry...")
 			time.Sleep(time.Second)
@@ -152,7 +133,7 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 			break
 		}
 	}
-	mustCompile := fmt.Sprintf(`%s:(\[.*?\])`, c.cfg.TextKey)
+	mustCompile := fmt.Sprintf(`"%s":(\[.*?\])`, c.cfg.TextKey)
 	regexpBlock := regexp.MustCompile(mustCompile)
 	authorRxpBlock := regexp.MustCompile(`"ig_artist":(\{.*?\})`)
 	blockWithUsername := authorRxpBlock.FindAllStringSubmatch(jsonString, -1)
@@ -166,13 +147,14 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 			urls = append(urls, res)
 		}
 	}
-	urls = urls[:3]
+
 	for _, block := range blockWithUsername {
 		usernameBlock := authorPost.FindAllStringSubmatch(block[0], 1)
 		for _, u := range usernameBlock {
 			author = u[1]
 		}
 	}
+	urls = urls[:3]
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("there is no urls, retry it")
 	}
