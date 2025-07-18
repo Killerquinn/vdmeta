@@ -16,9 +16,9 @@ func main() {
 	}
 
 	extractor := resolver.NewExtractor(cnfg)
-	result, err := extractor.ExtractIg("https://www.instagram.com/reels/DJKBATZAvyA/")
+	result, err := extractor.ExtractIg("https://www.instagram.com/reels/DLZiiAju4tl/")
 	if err != nil {
-		fmt.Println("your library is piece of shit")
+		fmt.Println(err)
 		return
 	}
 

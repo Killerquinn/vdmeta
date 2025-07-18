@@ -60,6 +60,15 @@ func (c *ConfLoader) ExtractParts(RawUrl string) (*models.IgMeta, error) {
 			ID:   parts[1],
 		}, nil
 
+	case "reel":
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("missing reel ID in link")
+		}
+		return &models.IgMeta{
+			Type: "reel",
+			ID:   parts[1],
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported type of material: %s", parts[0])
 	}
