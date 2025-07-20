@@ -6,7 +6,7 @@ type IgMeta struct {
 }
 
 type InstagramContent struct {
-	VideoLink []string
+	VideoLink map[int]string
 	Author    string
 }
 

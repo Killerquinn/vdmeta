@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,7 +130,8 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 
 	maxRetries := c.cfg.MaxRetries
 	jsonString := ""
-	var urls []string
+	urls := make(map[int]string)
+
 	var author string
 
 	for i := 0; i < maxRetries; i++ {
@@ -148,12 +150,20 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 	blockWithUsername := authorRxpBlock.FindAllStringSubmatch(jsonString, -1)
 	blocks := regexpBlock.FindAllStringSubmatch(jsonString, -1)
 	urlRxp := regexp.MustCompile(`"url":"([^"]+)"`)
+	typeRxp := regexp.MustCompile(`"type":(\d{3})`)
 	authorPost := regexp.MustCompile(`"username":"([^"]+)"`)
 	for _, block := range blocks {
+		typeBlock := typeRxp.FindAllStringSubmatch(block[0], 3)
 		urlBlock := urlRxp.FindAllStringSubmatch(block[0], 3)
-		for _, u := range urlBlock {
-			res := strings.ReplaceAll(u[1], "\\", "")
-			urls = append(urls, res)
+		for _, t := range typeBlock {
+			for _, u := range urlBlock {
+				res := strings.ReplaceAll(u[1], "\\", "")
+				foundType, err := strconv.Atoi(t[1])
+				if err != nil {
+					panic(err)
+				}
+				urls[foundType] = res
+			}
 		}
 	}
 
@@ -163,7 +173,7 @@ func (c *ConfLoader) ExtractLink(rawUrl string) (*models.InstagramContent, error
 			author = u[1]
 		}
 	}
-	urls = urls[:3]
+
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("there is no urls, retry it")
 	}
