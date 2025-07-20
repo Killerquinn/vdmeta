@@ -23,5 +23,6 @@ func main() {
 	}
 
 	fmt.Println("Author:", result.Author)
-	fmt.Println("Video Links:", result.VideoLink[0])
+	fmt.Println("Video Links:", result.VideoLink[103]) //103 - best quality, best frames per second rate/101 - fps rate worse
+	fmt.Println(len(result.VideoLink))
 }
